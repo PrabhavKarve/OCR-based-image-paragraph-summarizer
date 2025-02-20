@@ -1,0 +1,109 @@
+import nltk
+import re
+import heapq
+import requests
+import cv2
+import numpy as np
+import pytesseract
+
+# Download stopwords if not present
+nltk.download('stopwords')
+nltk.download('punkt')
+
+# Path to Tesseract-OCR (Change this based on your installation)
+pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+
+# IP Webcam URL (Ensure webcam server is running)
+URL = "http://192.168.1.4:8080/shot.jpg"
+
+# Kernel for image processing
+ker = np.ones((1, 1), np.uint8)
+
+def summaryfunc(paragraph):
+    """Summarizes a given text paragraph."""
+    cleanedpara = re.sub(r'\[[0-9]*\]', ' ', paragraph)
+    cleanedpara = re.sub(r'\s+', ' ', cleanedpara)
+
+    sen_tokens = nltk.sent_tokenize(cleanedpara)
+    cleanedpara = re.sub(r'[^a-zA-Z]', ' ', cleanedpara)
+    cleanedpara = re.sub(r'\s+', ' ', cleanedpara)
+
+    word_token = nltk.word_tokenize(cleanedpara)
+
+    stopwords = nltk.corpus.stopwords.words('english')
+    word_frequency = {}
+
+    for word in word_token:
+        if word not in stopwords:
+            word_frequency[word] = word_frequency.get(word, 0) + 1
+
+    max_freq = max(word_frequency.values(), default=1)
+
+    for word in word_frequency:
+        word_frequency[word] /= max_freq
+
+    sentence_score = {}
+
+    for sentence in sen_tokens:
+        for word in nltk.word_tokenize(sentence.lower()):
+            if word in word_frequency:
+                if len(sentence.split(' ')) < 30:
+                    sentence_score[sentence] = sentence_score.get(sentence, 0) + word_frequency[word]
+
+    summary = heapq.nlargest(4, sentence_score, key=sentence_score.get)
+    
+    print("\n🔹 SUMMARY 🔹\n")
+    for sent in summary:
+        print(sent)
+
+def display_img(pic):
+    """Displays an image."""
+    cv2.imshow("Processed Image", pic)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+
+def get_text(frr):
+    """Extracts and summarizes text from an image."""
+    text = pytesseract.image_to_string(frr, lang='eng')
+    print("\n🔹 Extracted Text 🔹\n", text)
+    summaryfunc(text)
+    display_img(frr)
+
+def process_img(im):
+    """Processes an image before OCR."""
+    im = cv2.resize(im, (700, 700))
+    im = cv2.cvtColor(im, cv2.COLOR_BGR2GRAY)
+    im = cv2.dilate(im, ker, iterations=1)
+    im = cv2.erode(im, ker, iterations=1)
+    im = cv2.resize(im, (700, 700))
+    
+    get_text(im)
+
+def fetch_image():
+    """Fetches an image from the IP webcam."""
+    try:
+        img_res = requests.get(URL, timeout=5)
+        img_res.raise_for_status()
+        img_arr = np.array(bytearray(img_res.content), np.uint8)
+        img = cv2.imdecode(img_arr, -1)
+        return img
+    except requests.exceptions.RequestException as e:
+        print("\n❌ Error fetching image:", e)
+        return None
+
+# Capture images in real time
+while True:
+    img = fetch_image()
+    if img is None:
+        print("⚠️ Retrying in 5 seconds...")
+        cv2.waitKey(5000)
+        continue
+
+    cv2.imshow('IPWebcam', img)
+
+    # Press 'q' to exit
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        cv2.destroyAllWindows()
+        break
+
+process_img(img)
